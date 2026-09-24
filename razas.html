@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>DogAPI</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link href="https://fonts.googleapis.com/css2?family=Nunito:wght@400;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="estilos.css">
+</head>
+<body>
+    <div class="contenedor">
+        <h1>Razas de perro</h1>
+        <p class="subtitulo">Datos y fotos pedidos en directo a la Dog API. Pulsa una tarjeta para ver la ficha completa.</p>
+
+        <div class="herramientas">
+            <input id="buscador" type="search" placeholder="Busca una raza por nombre..." aria-label="Buscar raza">
+            <label class="chip"><input id="filtro-hipo" type="checkbox"> Solo hipoalergénicas</label>
+        </div>
+        <p id="contador" role="status"></p>
+
+        <main id="lista"></main>
+
+        <div id="estado" role="status"></div>
+        <div class="centro"><button id="mas" class="principal">Cargar más razas</button></div>
+
+        <!-- Aquí se muestra mi versión básica original (títulos y párrafos) -->
+        <details class="basica">
+            <summary>Versión básica (mi código original)</summary>
+            <div id="lista-basica"></div>
+        </details>
+    </div>
+
+    <dialog id="detalle" aria-label="Ficha de la raza"></dialog>
+
+    <script>
+        // 1. Datos de partida ------------------------------------------------
+        const URL_BASE = "https://dogapi.dog/api/v2";
+        const COLORES = ["var(--rosa)", "var(--menta)", "var(--lavanda)", "var(--cielo)", "var(--sol)"];
+
+        let razas = [];        // aquí guardamos todas las razas que llevamos cargadas
+        let pagina = 0;        // última página pedida a la API
+        let hayMas = true;     // ¿quedan más páginas por pedir?
+        let cargando = false;  // evita pedir dos veces a la vez
+
+        // 2. Referencias al HTML ----------------------------------------------
+        const lista = document.getElementById("lista");
+        const estado = document.getElementById("estado");
+        const contador = document.getElementById("contador");
+        const buscador = document.getElementById("buscador");
+        const filtroHipo = document.getElementById("filtro-hipo");
+        const botonMas = document.getElementById("mas");
+        const detalle = document.getElementById("detalle");
+
+        // 3. Pedir una página de razas a la API -------------------------------
+        async function cargarPagina() {
+            if (cargando || !hayMas) return;
+            cargando = true;
+            botonMas.disabled = true;
+            estado.className = "";
+            estado.textContent = "Cargando razas...";
+
+            try {
+                // Igual que en la consola, pero pidiendo la página siguiente.
+                const respuesta = await fetch(`${URL_BASE}/breeds?page[number]=${pagina + 1}`);
+                if (!respuesta.ok) throw new Error(`El servidor respondió con error ${respuesta.status}`);
+                const body = await respuesta.json();
+
+                razas = razas.concat(body.data);   // añadimos las nuevas a las que ya teníamos
+                pagina++;
+                hayMas = body.data.length >= 30;   // si llegan menos de 30, era la última página
+
+                estado.textContent = hayMas ? "" : "Ya están todas las razas cargadas.";
+                botonMas.hidden = !hayMas;
+                pintar();
+            } catch (error) {
+                estado.className = "error";
+                estado.textContent = `No se pudieron cargar las razas: ${error.message}`;
+            } finally {
+                cargando = false;
+                botonMas.disabled = false;
+            }
+        }
+
+        // 4. Funciones de ayuda ----------------------------------------------
+        // Evita que un texto de la API se interprete como HTML.
+        function esc(texto) {
+            const div = document.createElement("div");
+            div.textContent = texto ?? "";
+            return div.innerHTML;
+        }
+        // Convierte {min, max} en "14–16 años". Si falta el dato, lo dice.
+        function rango(obj, unidad) {
+            if (!obj || obj.min == null || obj.max == null) return "Dato desconocido";
+            return `${obj.min}–${obj.max} ${unidad}`;
+        }
+        // Foto de la raza: la API redirige este endpoint a una imagen.
+        function urlFoto(raza) {
+            return `${URL_BASE}/breeds/${raza.id}/image`;
+        }
+        // Crea una <img> y, si la foto falla, deja un emoji en su lugar.
+        function crearFoto(raza, contenedor) {
+            const img = document.createElement("img");
+            img.loading = "lazy";
+            img.alt = `Foto de ${raza.attributes.name}`;
+            img.src = urlFoto(raza);
+            img.addEventListener("error", () => {
+                contenedor.classList.add("sin-foto");
+                img.remove();
+            });
+            contenedor.appendChild(img);
+        }
+
+        // 5. Dibujar las tarjetas ---------------------------------------------
+        function crearTarjeta(raza, i) {
+            const a = raza.attributes;
+
+            const tarjeta = document.createElement("button");
+            tarjeta.type = "button";
+            tarjeta.className = "tarjeta";
+            tarjeta.style.setProperty("--fondo", COLORES[i % COLORES.length]);
+
+            const foto = document.createElement("div");
+            foto.className = "foto";
+            crearFoto(raza, foto);
+
+            const info = document.createElement("div");
+            info.className = "info";
+            info.innerHTML = `
+                <h2>${esc(a.name)}</h2>
+                <p class="vida">Vida: ${esc(rango(a.life, "años"))}</p>
+                ${a.hypoallergenic ? '<span class="etiqueta">Hipoalergénica</span>' : ""}
+            `;
+
+            tarjeta.append(foto, info);
+            tarjeta.addEventListener("click", () => abrirDetalle(raza));
+            return tarjeta;
+        }
+
+        // Vuelve a dibujar la lista aplicando el buscador y el filtro.
+        function pintar() {
+            const texto = buscador.value.trim().toLowerCase();
+            const soloHipo = filtroHipo.checked;
+            lista.innerHTML = "";
+            let visibles = 0;
+
+            razas.forEach((raza, i) => {
+                const a = raza.attributes;
+                if (texto && !a.name.toLowerCase().includes(texto)) return;
+                if (soloHipo && !a.hypoallergenic) return;
+                lista.appendChild(crearTarjeta(raza, i));
+                visibles++;
+            });
+
+            contador.textContent = visibles === 0 && razas.length > 0
+                ? "Ninguna raza coincide. Prueba con otro nombre o carga más razas."
+                : `Mostrando ${visibles} de ${razas.length} razas cargadas`;
+        }
+
+        // 6. Ficha de detalle --------------------------------------------------
+        function puntos(n) {
+            let html = '<span class="puntos">';
+            for (let i = 1; i <= 5; i++) html += `<span class="punto${i <= n ? " lleno" : ""}"></span>`;
+            return html + "</span>";
+        }
+
+        function abrirDetalle(raza) {
+            const a = raza.attributes;
+            const origen = [a.origin?.country, a.origin?.region, a.origin?.era].filter(Boolean).join(", ") || "Dato desconocido";
+            const pelaje = [a.coat?.type, a.coat?.length].filter(Boolean).join(", ") || "Dato desconocido";
+            const rasgos = [
+                ["Energía", a.traits?.energy],
+                ["Ladridos", a.traits?.barking],
+                ["Baba", a.traits?.drooling],
+                ["Cuidado del pelo", a.traits?.grooming],
+                ["Muda de pelo", a.traits?.shedding],
+            ].filter(([, valor]) => valor != null);
+            const etiquetas = [...(a.traits?.temperament || []), ...(a.coat?.colors || [])];
+
+            detalle.innerHTML = `
+                <button class="cerrar" type="button">Cerrar</button>
+                <div class="detalle-foto"></div>
+                <div class="detalle-cuerpo">
+                    <h2>${esc(a.name)}</h2>
+                    <p class="descripcion">${esc(a.description || "Sin descripción.")}</p>
+                    <div class="datos">
+                        <div class="dato"><b>Esperanza de vida</b>${esc(rango(a.life, "años"))}</div>
+                        <div class="dato"><b>Peso (machos)</b>${esc(rango(a.male_weight, "kg"))}</div>
+                        <div class="dato"><b>Peso (hembras)</b>${esc(rango(a.female_weight, "kg"))}</div>
+                        <div class="dato"><b>Altura (machos)</b>${esc(rango(a.male_height, "cm"))}</div>
+                        <div class="dato"><b>Altura (hembras)</b>${esc(rango(a.female_height, "cm"))}</div>
+                        <div class="dato"><b>Origen</b>${esc(origen)}</div>
+                        <div class="dato"><b>Pelaje</b>${esc(pelaje)}</div>
+                        <div class="dato"><b>Hipoalergénica</b>${a.hypoallergenic ? "Sí" : "No"}</div>
+                    </div>
+                    ${rasgos.length ? `<ul class="rasgos">${rasgos.map(([nombre, v]) => `<li>${esc(nombre)} ${puntos(v)}</li>`).join("")}</ul>` : ""}
+                    ${etiquetas.length ? `<div class="etiquetas">${etiquetas.map((e) => `<span class="etiqueta">${esc(e)}</span>`).join("")}</div>` : ""}
+                </div>
+            `;
+            crearFoto(raza, detalle.querySelector(".detalle-foto"));
+            detalle.querySelector(".cerrar").addEventListener("click", () => detalle.close());
+            detalle.showModal();
+        }
+        // Clic fuera de la ficha = cerrarla.
+        detalle.addEventListener("click", (e) => { if (e.target === detalle) detalle.close(); });
+
+        // 7. Mi versión básica (mi código original) -----------------------------
+        // Es mi primera versión: un fetch y un forEach que crea título y párrafos.
+        // Cambios respecto a mi código original:
+        //  - Escribe en #lista-basica (el id #lista ahora lo usan las tarjetas).
+        //  - La variable se llama listaBasica para no confundirla con la de arriba.
+        //  - El texto de la vida lleva espacios: "Vida: 14 a 16 años".
+        async function cargarRazas() {
+            const response = await fetch("https://dogapi.dog/api/v2/breeds");
+            const body = await response.json();
+            console.log(body);
+
+            const listaBasica = document.getElementById("lista-basica");
+
+            body.data.forEach(raza => {
+                const titulo = document.createElement("h2");
+                titulo.textContent = raza.attributes.name;
+                listaBasica.appendChild(titulo);
+
+                const descripcion = document.createElement("p");
+                descripcion.textContent = raza.attributes.description;
+                listaBasica.appendChild(descripcion);
+
+                const vida = document.createElement("p");
+                vida.textContent = "Vida: " + raza.attributes.life.min + " a " + raza.attributes.life.max + " años";
+                listaBasica.appendChild(vida);
+            });
+        }
+
+        // 8. Eventos y arranque -------------------------------------------------
+        buscador.addEventListener("input", pintar);
+        filtroHipo.addEventListener("change", pintar);
+        botonMas.addEventListener("click", cargarPagina);
+
+        cargarPagina(); // al abrir la página, pedimos la primera página de tarjetas
+        cargarRazas();  // y también mi versión básica
+    </script>
+</body>
+</html>
